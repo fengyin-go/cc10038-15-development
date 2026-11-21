@@ -545,3 +545,497 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
   '下游消费标识': '采集血缘样例3',
   '记录时间': '2026-09-03'}]
 }
+
+
+# ── 跨区班报演示数据 ────────────────────────────────────────────────────────
+# 同一个跨区班报沿用南区、北区两处数据：南区字段齐全，北区每期少一个 host 字段。
+# 两区使用同一个格式版本 v1.0，但各自登记独立的必填字段阈值，判定依据分开记录。
+# 出报时的分母、阈值和缺失行冻结在 QC-9001 / QC-9002 两条结论里，后续重算只追加。
+
+def _demo_fields(**values: str) -> str:
+    import json
+
+    return json.dumps(values, ensure_ascii=False)
+
+
+def _demo_conclusion(
+    *,
+    cid: int,
+    source_id: str,
+    region: str,
+    qualified: bool,
+    missing_field: str | None,
+    missing_rows: list[dict],
+    published_at: str,
+    batch_no: str,
+    rule_id: int,
+) -> dict:
+    required = ["time", "level", "message", "host"]
+    denominator = 4
+    stats = {field: {"缺失数": 0, "缺失率": 0.0} for field in required}
+    if missing_field:
+        stats[missing_field] = {"缺失数": len(missing_rows), "缺失率": 0.5}
+    threshold = {
+        "required_fields": required,
+        "max_missing_rate": 0.1,
+        "per_field": {},
+        "min_records": 1,
+    }
+    triggered = (
+        [{
+            "字段": missing_field,
+            "阈值": 0.1,
+            "实测": 0.5,
+            "缺失数": len(missing_rows),
+            "分母": denominator,
+        }]
+        if missing_field else []
+    )
+    rule_name = f"{region}-班报必填字段完整性"
+    return {
+        "id": cid,
+        "结论编号": f"QC-{cid}",
+        "status": "合格" if qualified else "越线",
+        "pending": False,
+        "abnormal": not qualified,
+        "来源标识": source_id,
+        "采集区域": region,
+        "批次编号": batch_no,
+        "数据范围": "指定批次",
+        "结论版本": 1,
+        "格式版本": "v1.0",
+        "格式名称": "跨区班报格式",
+        "解析规则版本": "跨区班报字段解析",
+        "规则ID": rule_id,
+        "规则名称": rule_name,
+        "规则版本": 1,
+        "口径版本": f"{source_id}@r1",
+        "口径签名": "seed-bulletin",
+        "判定依据": (
+            f"规则「{rule_name}」v1｜适用来源 {source_id}（{region}）"
+            f"｜阈值 必填 time、level、message、host；缺失率≤10.0%｜格式 跨区班报格式 / v1.0"
+        ),
+        "必填字段": required,
+        "样本数": denominator,
+        "分母": denominator,
+        "缺失统计": stats,
+        "缺失总数": len(missing_rows),
+        "总缺失率": round(len(missing_rows) / (denominator * len(required)), 4),
+        "阈值": threshold,
+        "触发阈值": triggered,
+        "越线字段": [missing_field] if missing_field else [],
+        "是否合格": qualified,
+        "结论": "合格" if qualified else "越线",
+        "结论说明": (
+            "全部必填字段缺失率未超过本处阈值"
+            if qualified
+            else (
+                f"字段 {missing_field} 缺失率 "
+                f"{len(missing_rows) / denominator * 100:.1f}% > 阈值 10.0%"
+            )
+        ),
+        "缺失行": missing_rows,
+        "评估时间": published_at,
+        "备注": "出报时冻结的结论，后续重算不会改写本行",
+    }
+
+
+def _bulletin_demo() -> dict:
+    required = ["time", "level", "message", "host"]
+    south_logs = [
+        ("2026-11-19T08:00:00", "INFO", "south gateway ok", "south-host-1"),
+        ("2026-11-19T08:05:00", "WARN", "south disk 72%", "south-host-2"),
+        ("2026-11-19T08:10:00", "ERROR", "south upstream timeout", "south-host-1"),
+        ("2026-11-19T08:15:00", "INFO", "south request ok", "south-host-3"),
+    ]
+    north_logs = [
+        ("2026-11-19T08:00:00", "INFO", "north gateway ok", "north-host-1"),
+        ("2026-11-19T08:05:00", "WARN", "north disk 81%", None),
+        ("2026-11-19T08:10:00", "ERROR", "north upstream timeout", None),
+        ("2026-11-19T08:15:00", "INFO", "north request ok", "north-host-2"),
+    ]
+
+    sources = [
+        {
+            "id": 101,
+            "status": "已验证",
+            "pending": False,
+            "abnormal": False,
+            "来源标识": "bulletin-south",
+            "接入协议": "http",
+            "连接凭证": "token-south",
+            "采集区域": "南区",
+            "状态": "南区",
+            "source_version": 2,
+            "覆盖状态": "已计入",
+            "覆盖清单版本": "班报-跨区@1",
+            "覆盖结论编号": "QC-9001",
+            "覆盖更新时间": "2026-11-19T09:30:00",
+        },
+        {
+            "id": 102,
+            "status": "已验证",
+            "pending": True,
+            "abnormal": True,
+            "来源标识": "bulletin-north",
+            "接入协议": "http",
+            "连接凭证": "token-north",
+            "采集区域": "北区",
+            "状态": "北区",
+            "source_version": 2,
+            "覆盖状态": "未计入",
+            "覆盖清单版本": "班报-跨区@1",
+            "覆盖结论编号": "QC-9002",
+            "未计入原因": "校验越线：字段 host 缺失率超出阈值",
+            "覆盖更新时间": "2026-11-19T09:30:00",
+        },
+    ]
+
+    batches = [
+        {
+            "id": 101, "status": "已完成", "pending": False, "abnormal": False,
+            "批次编号": "INGE-9001", "所属数据源": "bulletin-south",
+            "采集时间窗口": "2026-11-19", "记录总数": "4", "批次状态": "南区早班",
+            "source_version": 2,
+        },
+        {
+            "id": 102, "status": "已完成", "pending": False, "abnormal": True,
+            "批次编号": "INGE-9002", "所属数据源": "bulletin-north",
+            "采集时间窗口": "2026-11-19", "记录总数": "4", "批次状态": "北区早班",
+            "source_version": 2,
+        },
+    ]
+
+    raw_rows: list[dict] = []
+    entities: list[dict] = []
+    north_missing_rows: list[dict] = []
+    for source_id, batch_no, region, logs, entity_base in (
+        ("bulletin-south", "INGE-9001", "南区", south_logs, 9101),
+        ("bulletin-north", "INGE-9002", "北区", north_logs, 9201),
+    ):
+        for index, (ts, level, message, host) in enumerate(logs, start=1):
+            raw_id = entity_base + index - 1
+            body = "|".join(part or "" for part in (ts, level, message, host))
+            raw_rows.append({
+                "id": raw_id, "status": "已解析", "pending": False, "abnormal": False,
+                "批次编号": batch_no, "原始行号": str(index), "采集时间戳": ts,
+                "原始正文": body, "解析状态": "已解析", "source_id": source_id,
+            })
+            fields = {"time": ts, "level": level, "message": message}
+            if host:
+                fields["host"] = host
+            else:
+                fields["host"] = ""
+            member = {
+                "id": raw_id,
+                "status": "校验通过" if host else "校验失败",
+                "pending": False,
+                "abnormal": not host,
+                "来源批次": batch_no, "原始记录ID": str(raw_id),
+                "解析规则版本": "跨区班报字段解析",
+                "标准化字段集": _demo_fields(**fields),
+                "校验状态": "校验通过" if host else "校验失败",
+                "source_id": source_id, "来源标识": source_id,
+                "报表范围": "班报-跨区",
+                "schema_version": "v1.0", "format_version": "v1.0",
+                "结论编号": "QC-9001" if source_id == "bulletin-south" else "QC-9002",
+                "缺失字段": [] if host else ["host"],
+            }
+            if not host:
+                north_missing_rows.append({
+                    "标准化记录ID": raw_id,
+                    "原始记录ID": str(raw_id),
+                    "来源批次": batch_no,
+                    "缺失字段": ["host"],
+                    "缺失值": {"host": ""},
+                    "原始正文摘录": body,
+                })
+            entities.append(member)
+
+    rules = [{
+        "id": 101,
+        "status": "已生效",
+        "pending": False,
+        "abnormal": False,
+        "规则名称": "跨区班报必填字段完整性（分来源）",
+        "校验类型": "必填字段缺失率",
+        "阈值参数": "必填 time、level、message、host；缺失率≤10%",
+        "适用数据源": "bulletin-south",
+        "严重级别": "高",
+        "规则版本": 1,
+        "threshold": {"required_fields": required, "max_missing_rate": 0.1, "per_field": {}, "min_records": 1},
+        "口径签名": "seed-south",
+        "格式版本": "v1.0",
+        "格式名称": "跨区班报格式",
+    }, {
+        "id": 102,
+        "status": "已生效",
+        "pending": False,
+        "abnormal": False,
+        "规则名称": "跨区班报必填字段完整性（北区口径）",
+        "校验类型": "必填字段缺失率",
+        "阈值参数": "必填 time、level、message、host；缺失率≤10%",
+        "适用数据源": "bulletin-north",
+        "严重级别": "高",
+        "规则版本": 1,
+        "threshold": {"required_fields": required, "max_missing_rate": 0.1, "per_field": {}, "min_records": 1},
+        "口径签名": "seed-north",
+        "格式版本": "v1.0",
+        "格式名称": "跨区班报格式",
+    }]
+
+    schemas = [{
+        "id": 101,
+        "status": "已发布",
+        "pending": False,
+        "abnormal": False,
+        "版本号": "v1.0",
+        "适用数据源": "bulletin-south,bulletin-north",
+        "字段定义": '["time", "level", "message", "host"]',
+        "向后兼容标记": "是",
+        "发布说明": "跨区班报统一格式，南北两区同时采用；必填字段阈值各自登记",
+        "field_count": 4,
+    }]
+
+    parsers = [{
+        "id": 101,
+        "status": "已发布",
+        "pending": False,
+        "abnormal": False,
+        "规则名称": "跨区班报字段解析",
+        "适用数据源": "bulletin-south,bulletin-north",
+        "输入格式": "跨区班报格式",
+        "输出字段列表": "time,level,message,host",
+        "解析引擎": "regex",
+    }]
+
+    south_conclusion = _demo_conclusion(
+        cid=9001, source_id="bulletin-south", region="南区",
+        qualified=True, missing_field=None, missing_rows=[],
+        published_at="2026-11-19T09:00:00",
+        batch_no="INGE-9001", rule_id=101,
+    )
+    north_conclusion = _demo_conclusion(
+        cid=9002, source_id="bulletin-north", region="北区",
+        qualified=False, missing_field="host", missing_rows=north_missing_rows,
+        published_at="2026-11-19T09:00:00",
+        batch_no="INGE-9002", rule_id=102,
+    )
+
+    coverage = {
+        "视图名称": "班报-跨区",
+        "覆盖版本": 1,
+        "生成时间": "2026-11-19T09:30:00",
+        "发布状态": "已发布",
+        "发布时间": "2026-11-19T09:30:00",
+        "报告可复核": True,
+        "数据源范围": ["bulletin-north", "bulletin-south"],
+        "来源总数": 2,
+        "计入来源数": 1,
+        "未计入来源数": 1,
+        "覆盖完整": False,
+        "口径": "按数据源最新校验结论准入，仅统计校验通过日志",
+        "计入来源": [{
+            "来源标识": "bulletin-south",
+            "采集区域": "南区",
+            "结论编号": "QC-9001",
+            "格式版本": "v1.0",
+            "判定依据": south_conclusion["判定依据"],
+            "样本数": 4,
+            "阈值": south_conclusion["阈值"],
+            "缺失统计": south_conclusion["缺失统计"],
+            "日志数": 4,
+            "合格日志数": 4,
+            "结论快照": {
+                "结论编号": "QC-9001",
+                "来源标识": "bulletin-south",
+                "采集区域": "南区",
+                "批次编号": "INGE-9001",
+                "格式版本": "v1.0",
+                "判定依据": south_conclusion["判定依据"],
+                "必填字段": required,
+                "样本数": 4,
+                "分母": 4,
+                "阈值": south_conclusion["阈值"],
+                "缺失统计": south_conclusion["缺失统计"],
+                "触发阈值": [],
+                "越线字段": [],
+                "是否合格": True,
+                "结论": "合格",
+                "结论说明": south_conclusion["结论说明"],
+                "缺失行": [],
+                "评估时间": "2026-11-19T09:00:00",
+            },
+        }],
+        "未计入来源": [{
+            "来源标识": "bulletin-north",
+            "采集区域": "北区",
+            "结论编号": "QC-9002",
+            "格式版本": "v1.0",
+            "判定依据": north_conclusion["判定依据"],
+            "样本数": 4,
+            "阈值": north_conclusion["阈值"],
+            "缺失统计": north_conclusion["缺失统计"],
+            "日志数": 4,
+            "未计入日志数": 4,
+            "原因": "校验越线：字段 host 缺失率超出阈值",
+            "触发阈值": north_conclusion["触发阈值"],
+            "缺失行": north_missing_rows,
+            "结论快照": {
+                "结论编号": "QC-9002",
+                "来源标识": "bulletin-north",
+                "采集区域": "北区",
+                "批次编号": "INGE-9002",
+                "格式版本": "v1.0",
+                "判定依据": north_conclusion["判定依据"],
+                "必填字段": required,
+                "样本数": 4,
+                "分母": 4,
+                "阈值": north_conclusion["阈值"],
+                "缺失统计": north_conclusion["缺失统计"],
+                "触发阈值": north_conclusion["触发阈值"],
+                "越线字段": ["host"],
+                "是否合格": False,
+                "结论": "越线",
+                "结论说明": north_conclusion["结论说明"],
+                "缺失行": north_missing_rows,
+                "评估时间": "2026-11-19T09:00:00",
+            },
+        }],
+    }
+
+    views = [{
+        "id": 9001,
+        "status": "已生效",
+        "pending": False,
+        "abnormal": True,
+        "视图名称": "班报-跨区",
+        "聚合维度": "level",
+        "指标定义": "count(time)",
+        "数据源范围": "标准化明细",
+        "刷新间隔": "manual",
+        "published": True,
+        "published_at": "2026-11-19T09:30:00",
+        "覆盖版本": 1,
+        "enforce_quality": True,
+        "results": {
+            "INFO": {"count": 2, "sum": 0.0, "values": []},
+            "WARN": {"count": 1, "sum": 0.0, "values": []},
+            "ERROR": {"count": 1, "sum": 0.0, "values": []},
+        },
+        "source_records": 8,
+        "合格日志数": 4,
+        "计入来源数": 1,
+        "未计入来源数": 1,
+        "来源覆盖清单": coverage,
+        "来源覆盖清单引用": "班报-跨区@1",
+        "排除说明": "按数据源最新校验结论准入，仅统计校验通过日志",
+        "含未计入来源": True,
+        "排除记录": [
+            {"记录ID": e["id"], "来源标识": "bulletin-north",
+             "来源批次": "INGE-9002", "结论编号": "QC-9002",
+             "拒绝原因": "来源最新结论不合格"}
+            for e in entities if e.get("来源标识") == "bulletin-north"
+        ],
+        "refreshed_at": "2026-11-19T09:30:00",
+    }]
+
+    lineage = [
+        {
+            "id": 9001, "status": "已记录", "pending": False, "abnormal": False,
+            "来源批次": "班报-跨区", "解析规则版本": "班报-跨区",
+            "标准化版本": "班报-跨区", "下游消费标识": "export-9001",
+            "记录时间": "2026-11-19T09:35:00", "来源标识": "bulletin-south",
+            "采集区域": "南区", "校验结论编号": "QC-9001", "是否计入": True,
+            "来源覆盖清单引用": "班报-跨区@1",
+        },
+        {
+            "id": 9002, "status": "验证异常", "pending": False, "abnormal": True,
+            "来源批次": "班报-跨区", "解析规则版本": "班报-跨区",
+            "标准化版本": "班报-跨区", "下游消费标识": "export-9001",
+            "记录时间": "2026-11-19T09:35:00", "来源标识": "bulletin-north",
+            "采集区域": "北区", "校验结论编号": "QC-9002", "是否计入": False,
+            "来源覆盖清单引用": "班报-跨区@1",
+            "未计入原因": "校验越线：字段 host 缺失率超出阈值",
+        },
+    ]
+
+    exports = [{
+        "id": 9001, "status": "已完成", "pending": False, "abnormal": True,
+        "导出范围": "班报-跨区", "目标格式": "csv", "过滤条件": "{}",
+        "导出状态": "已完成", "文件路径": "/exports/班报-跨区.csv",
+        "导出时间": "2026-11-19T09:35:00",
+        "合格日志数": 4, "来源覆盖清单引用": "班报-跨区@1",
+        "来源覆盖清单": coverage,
+        "未计入来源": [{
+            "来源标识": "bulletin-north", "采集区域": "北区",
+            "结论编号": "QC-9002", "原因": "校验越线：字段 host 缺失率超出阈值",
+        }],
+        "record_count": 3,
+    }]
+
+    alerts = [{
+        "id": 9001,
+        "来源标识": "bulletin-south",
+        "采集区域": "南区",
+        "结论编号": "QC-9001",
+        "核对结果": "通过",
+        "告警条数": 0,
+        "告警明细": [],
+        "核对时间": "2026-11-19T09:10:00",
+        "status": "通过",
+        "pending": False,
+        "abnormal": False,
+    }]
+
+    return {
+        "sources": sources,
+        "batches": batches,
+        "raw": raw_rows,
+        "entities": entities,
+        "rules": rules,
+        "schemas": schemas,
+        "parsers": parsers,
+        "conclusions": [south_conclusion, north_conclusion],
+        "views": views,
+        "lineage": lineage,
+        "exports": exports,
+        "alerts": alerts,
+    }
+
+
+_BULLETIN = _bulletin_demo()
+
+# 来源标识与批次编号在库里唯一：覆盖业务模块自带的同值样例行，
+# 避免同一批次出现两套来源数据、把质量校验的分母算重。
+_BULLETIN_SOURCE_IDS = {row["来源标识"] for row in _BULLETIN["sources"]}
+_BULLETIN_BATCH_NOS = {row["批次编号"] for row in _BULLETIN["batches"]}
+_BULLETIN_RULE_NAMES = {row["规则名称"] for row in _BULLETIN["rules"]}
+_BULLETIN_SCHEMA_VERSIONS = {row["版本号"] for row in _BULLETIN["schemas"]}
+_BULLETIN_PARSER_NAMES = {row["规则名称"] for row in _BULLETIN["parsers"]}
+_BULLETIN_VIEW_NAMES = {row["视图名称"] for row in _BULLETIN["views"]}
+
+
+def _drop_existing(module: str, predicate) -> None:
+    SEED_ROWS[module] = [row for row in SEED_ROWS[module] if not predicate(row)]
+
+
+_drop_existing("source_registry", lambda row: row.get("来源标识") in _BULLETIN_SOURCE_IDS)
+_drop_existing("ingest_batch", lambda row: row.get("批次编号") in _BULLETIN_BATCH_NOS)
+_drop_existing("quality_check", lambda row: row.get("规则名称") in _BULLETIN_RULE_NAMES)
+_drop_existing("schema_version", lambda row: row.get("版本号") in _BULLETIN_SCHEMA_VERSIONS)
+_drop_existing("field_parser", lambda row: row.get("规则名称") in _BULLETIN_PARSER_NAMES)
+_drop_existing("aggregation_view", lambda row: row.get("视图名称") in _BULLETIN_VIEW_NAMES)
+
+SEED_ROWS["source_registry"].extend(_BULLETIN["sources"])
+SEED_ROWS["ingest_batch"].extend(_BULLETIN["batches"])
+SEED_ROWS["raw_records"].extend(_BULLETIN["raw"])
+SEED_ROWS["parsed_entity"].extend(_BULLETIN["entities"])
+SEED_ROWS["quality_check"].extend(_BULLETIN["rules"])
+SEED_ROWS["schema_version"].extend(_BULLETIN["schemas"])
+SEED_ROWS["field_parser"].extend(_BULLETIN["parsers"])
+SEED_ROWS["aggregation_view"].extend(_BULLETIN["views"])
+SEED_ROWS["data_lineage"].extend(_BULLETIN["lineage"])
+SEED_ROWS["data_export"].extend(_BULLETIN["exports"])
+SEED_ROWS["quality_conclusion"] = _BULLETIN["conclusions"]
+SEED_ROWS["quality_alert_check"] = _BULLETIN["alerts"]

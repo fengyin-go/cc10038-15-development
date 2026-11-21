@@ -60,6 +60,7 @@ npm run dev
 | 重试队列 | `retry_queue` | 重试任务 | 失败记录ID、失败原因、重试次数 |
 | 格式适配层 | `format_adapter` | 格式适配 | 输入格式名、适配器类型、目标格式 |
 | 质量校验规则 | `quality_check` | 校验规则 | 规则名称、校验类型、阈值参数 |
+| 分来源校验结论 | `quality_conclusion` | 校验结论 | 来源标识、分母、缺失统计、判定依据 |
 | 归档策略 | `data_archive` | 归档策略 | 策略名称、归档周期、保留时长 |
 | 限流控制器 | `rate_limiter` | 限流规则 | 数据源、每秒上限、突发并发 |
 | 解析操作日志 | `parse_journal` | 解析日志 | 操作类型、批次编号、执行时间 |
@@ -78,6 +79,26 @@ npm run dev
   `frontend/src/domain/<模块>.ts`，用于承载真实业务差异并维持36题位容量。
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
+
+## 分来源质量校验
+
+前端入口：`/quality-console`，后端逻辑在 `app/services/source_quality.py`。
+
+- **现行口径**：每个数据源在 `quality_check` 里登记自己的必填字段和缺失率阈值
+  （`/api/pipeline/quality/rules`）。规则版本递增，旧结论不改写。
+- **校验结论**：每次重算追加一条 `quality_conclusion`，冻结出报时的分母、阈值、
+  缺失统计和缺失行；同一格式版本下的南区、北区各有一条独立判定依据。
+- **聚合准入**：`refresh_aggregation` 读取每个来源最新结论，只统计结论合格且记录
+  自身校验通过的日志，未计入来源写进视图的来源覆盖清单。
+- **回写与追溯**：`publish_aggregation` 把覆盖状态回写到 `source_registry`，
+  导出记录带 `校验条目引用`，报告使用方可按结论编号回查分母和缺失行。
+- **样本核对与告警**：`/quality/sample` 按来源单独重算缺失率，不与其他来源共用
+  分母；`/quality/alerts/check` 可按区域独立核对。
+
+演示数据：`bulletin-south`（南区，字段齐全）与 `bulletin-north`（北区，每期缺
+`host`）共用班报格式 `v1.0` 和视图 `班报-跨区`。初始状态北区结论为“越线”，
+班报来源组成显示 1/2 计入；给北区补发带 `host` 的样本后，重新刷新聚合即可看到
+两区都计入。
 
 领域：数据工程
 子方向：数据采集、爬虫与RPA
